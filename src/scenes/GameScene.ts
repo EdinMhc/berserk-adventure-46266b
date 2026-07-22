@@ -260,10 +260,11 @@ export default class GameScene extends Phaser.Scene {
     const startY = 8 * ts + ts / 2;
 
     // ── Character animations (4×4 sheet, 48×48 frames) ─────────────────
-    // Row 0 (frames 0-3):  walk down
-    // Row 1 (frames 4-7):  walk left
-    // Row 2 (frames 8-11): walk right
-    // Row 3 (frames 12-15): walk up
+    // Actual sheet layout (verified in-game):
+    // Row 0 (frames 0-3):   walk up
+    // Row 1 (frames 4-7):   walk right
+    // Row 2 (frames 8-11):  walk left
+    // Row 3 (frames 12-15): walk down
     const CHAR_KEY = 'gen-i-want-a-main-character-to-look-like-thi';
 
     const createOnce = (key: string, cfg: Phaser.Types.Animations.GenerateFrameNumbers, frameRate: number, repeat: number) => {
@@ -272,11 +273,11 @@ export default class GameScene extends Phaser.Scene {
       }
     };
 
-    createOnce('player-walk-down',  { start: 0,  end: 3  }, 8, -1);
-    createOnce('player-walk-left',  { start: 4,  end: 7  }, 8, -1);
-    createOnce('player-walk-right', { start: 8,  end: 11 }, 8, -1);
-    createOnce('player-walk-up',    { start: 12, end: 15 }, 8, -1);
-    createOnce('player-idle',       { start: 0,  end: 0  }, 1, -1);
+    createOnce('player-walk-down',  { start: 12, end: 15 }, 8, -1);
+    createOnce('player-walk-left',  { start: 8,  end: 11 }, 8, -1);
+    createOnce('player-walk-right', { start: 4,  end: 7  }, 8, -1);
+    createOnce('player-walk-up',    { start: 0,  end: 3  }, 8, -1);
+    createOnce('player-idle',       { start: 12, end: 12 }, 1, -1);
 
     this.player = this.physics.add.sprite(startX, startY, CHAR_KEY, 0)
       .setDisplaySize(40, 40)
