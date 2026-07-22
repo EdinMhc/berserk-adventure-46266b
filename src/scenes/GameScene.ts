@@ -266,7 +266,7 @@ export default class GameScene extends Phaser.Scene {
     // Row 3 (frames 12-15): walk up
     const CHAR_KEY = 'gen-i-want-a-main-character-to-look-like-thi';
 
-    const createOnce = (key: string, cfg: Phaser.Types.Animations.GenerateFrameNumbersConfig, frameRate: number, repeat: number) => {
+    const createOnce = (key: string, cfg: Phaser.Types.Animations.GenerateFrameNumbers, frameRate: number, repeat: number) => {
       if (!this.anims.exists(key)) {
         this.anims.create({ key, frames: this.anims.generateFrameNumbers(CHAR_KEY, cfg), frameRate, repeat });
       }
