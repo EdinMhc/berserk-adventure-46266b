@@ -259,12 +259,32 @@ export default class GameScene extends Phaser.Scene {
     const startX = 8 * ts + ts / 2;
     const startY = 8 * ts + ts / 2;
 
-    this.player = this.physics.add.sprite(startX, startY, '__pixel')
-      .setDisplaySize(24, 26)
-      .setTint(0xc8a878)
+    // ── Character animations (4×4 sheet, 48×48 frames) ─────────────────
+    // Row 0 (frames 0-3):  walk down
+    // Row 1 (frames 4-7):  walk left
+    // Row 2 (frames 8-11): walk right
+    // Row 3 (frames 12-15): walk up
+    const CHAR_KEY = 'gen-i-want-a-main-character-to-look-like-thi';
+
+    const createOnce = (key: string, cfg: Phaser.Types.Animations.GenerateFrameNumbersConfig, frameRate: number, repeat: number) => {
+      if (!this.anims.exists(key)) {
+        this.anims.create({ key, frames: this.anims.generateFrameNumbers(CHAR_KEY, cfg), frameRate, repeat });
+      }
+    };
+
+    createOnce('player-walk-down',  { start: 0,  end: 3  }, 8, -1);
+    createOnce('player-walk-left',  { start: 4,  end: 7  }, 8, -1);
+    createOnce('player-walk-right', { start: 8,  end: 11 }, 8, -1);
+    createOnce('player-walk-up',    { start: 12, end: 15 }, 8, -1);
+    createOnce('player-idle',       { start: 0,  end: 0  }, 1, -1);
+
+    this.player = this.physics.add.sprite(startX, startY, CHAR_KEY, 0)
+      .setDisplaySize(40, 40)
       .setDepth(65);
-    this.player.body.setSize(20, 20);
+    this.player.body.setSize(22, 22);
+    this.player.body.setOffset(13, 22); // centre the hitbox on the feet
     this.player.body.setCollideWorldBounds(true);
+    this.player.anims.play('player-idle', true);
 
     this.physics.add.collider(this.player, this.groundLayer);
 
@@ -288,7 +308,6 @@ export default class GameScene extends Phaser.Scene {
     const brand = this.add.graphics().setDepth(66);
     brand.lineStyle(1, 0xcc2200, 0.7);
     brand.strokeCircle(0, 0, 4);
-    // Draw cross lines manually without strokeLine
     brand.beginPath();
     brand.moveTo(-4, 0); brand.lineTo(4, 0);
     brand.moveTo(0, -4); brand.lineTo(0, 4);
@@ -531,7 +550,22 @@ export default class GameScene extends Phaser.Scene {
       this.facingY = vy / len;
     }
 
-    this.player.setTint(this.rage.isBerserk ? 0xff6633 : 0xc8a878);
+    // ── Drive directional animations ────────────────────────────────
+    if (!this.isInvincible || this.dodgeActive) {
+      if (vx !== 0 || vy !== 0) {
+        // Pick dominant axis; prefer horizontal when equal
+        if (Math.abs(vy) > Math.abs(vx)) {
+          this.player.anims.play(vy > 0 ? 'player-walk-down' : 'player-walk-up', true);
+        } else {
+          this.player.anims.play(vx > 0 ? 'player-walk-right' : 'player-walk-left', true);
+        }
+      } else {
+        this.player.anims.play('player-idle', true);
+      }
+    }
+
+    // Berserk tint overlay (subtle red, preserves sprite colours)
+    this.player.setTint(this.rage.isBerserk ? 0xff9966 : 0xffffff);
   }
 
   // ══════════════════════════════════════════════════════════════════════
