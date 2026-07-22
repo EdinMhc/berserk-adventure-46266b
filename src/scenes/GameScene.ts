@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { GAME_WIDTH, GAME_HEIGHT } from '../config';
 import { worldMap } from '../rpg/map';
-import { Health, Attack } from '../rpg/combat';
+import { Health, HealthBar, Attack } from '../rpg/combat';
 import { DialogueBox } from '../rpg/dialogue';
 import { Inventory, InventoryUI } from '../rpg/inventory';
 import { Npc, spawnNpc, nearestNpcInRange } from '../rpg/npc';
@@ -15,20 +15,20 @@ import {
 } from '../rpg/dialogues';
 
 // ── Day / Night constants ─────────────────────────────────────────────────
-const DAY_MS   = 60_000;  // 60 s per full cycle
-const NIGHT_MS = 40_000;  // 40 s of night within each cycle
+const DAY_MS   = 60_000;
+const NIGHT_MS = 40_000;
 const CYCLE_MS = DAY_MS + NIGHT_MS;
 
-// ── Apostle spawn configs: [tileX, tileY] within the big open world ───────
+// ── Apostle spawn configs ─────────────────────────────────────────────────
 const APOSTLE_POSITIONS: [number, number][] = [
-  [55, 11],  // Rotted Shepherd   (NE fields)
-  [60, 28],  // Hollow Knight     (east mid)
-  [18, 22],  // Plague Witch      (near well building)
-  [70, 8],   // Iron Beast        (far north)
-  [68, 26],  // Shadow Weaver     (south east)
+  [55, 11],
+  [60, 28],
+  [18, 22],
+  [70, 8],
+  [68, 26],
 ];
 
-// ── Wraith / demon wave spawn points ──────────────────────────────────────
+// ── Night wave spawn points ───────────────────────────────────────────────
 const WAVE_SPAWNS: [number, number][] = [
   [5, 5], [74, 5], [5, 28], [74, 28], [38, 5], [38, 28],
 ];
@@ -47,7 +47,7 @@ export default class GameScene extends Phaser.Scene {
   private keyEnter!: Phaser.Input.Keyboard.Key;
   private keyQ!: Phaser.Input.Keyboard.Key;
   private keyR!: Phaser.Input.Keyboard.Key;
-  private keyF!: Phaser.Input.Keyboard.Key; // dodge on F instead of W
+  private keyF!: Phaser.Input.Keyboard.Key;
   private pointerIsDown = false;
   private _wasDown = false;
 
@@ -61,10 +61,10 @@ export default class GameScene extends Phaser.Scene {
   protected map!: Phaser.Tilemaps.Tilemap;
   private groundLayer!: Phaser.Tilemaps.TilemapLayer;
 
-  // ── Player ─────────────────────────────────────────────────────────────
+  // ── Player ────────────────────────────────────────────────────────────
   protected player!: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
   private playerHealth!: Health;
-  private swordAttack!: Attack;
+  private playerHpBar!: HealthBar;
   private isInvincible = false;
   private invincibleTimer = 0;
   private facingX = 1;
@@ -93,18 +93,20 @@ export default class GameScene extends Phaser.Scene {
 
   // ── Enemies ───────────────────────────────────────────────────────────
   private enemies: Enemy[] = [];
+  private apostles: Enemy[] = [];
 
   // ── HUD ───────────────────────────────────────────────────────────────
   private hud!: HUD;
 
   // ── Day / Night ───────────────────────────────────────────────────────
-  private cycleTimer = 0;  // ms into current cycle
+  private cycleTimer = 0;
   private isNight = false;
   private nightWaveTimer = 0;
-  private nightWaveInterval = 12_000; // ms between waves
+  private nightWaveInterval = 12_000;
 
-  // ── Win state ──────────────────────────────────────────────────────────
+  // ── Win state ─────────────────────────────────────────────────────────
   private gameWon = false;
+  private winScreen!: Phaser.GameObjects.Container;
 
   constructor() { super('GameScene'); }
 
@@ -117,6 +119,7 @@ export default class GameScene extends Phaser.Scene {
     this.shards = 0;
     this.questFlags = {};
     this.enemies = [];
+    this.apostles = [];
     this.bolts = [];
     this.gameWon = false;
 
@@ -147,31 +150,29 @@ export default class GameScene extends Phaser.Scene {
     this.cooldownBerserk = new Cooldown(20_000);
     this.rage = new RageGauge();
 
-    // ── RPG systems ─────────────────────────────────────────────────────
+    // ── RPG systems ────────────────────────────────────────────────────
     this.dialogue = new DialogueBox(this);
     this.inventory = new Inventory();
     this.inventoryUI = new InventoryUI(this, this.inventory);
 
-    // Give starting item
     this.inventory.add({ id: 'broadsword', name: 'Iron Broadsword', equipSlot: 'weapon' });
     this.inventory.equip('broadsword');
 
-    // ── NPCs ────────────────────────────────────────────────────────────
+    // ── NPCs ───────────────────────────────────────────────────────────
     this._spawnNpcs();
 
-    // ── Spawn apostles ─────────────────────────────────────────────────
+    // ── Spawn apostles ────────────────────────────────────────────────
     this._spawnApostles();
 
-    // ── HUD ─────────────────────────────────────────────────────────────
+    // ── HUD ────────────────────────────────────────────────────────────
     this.hud = new HUD(this);
 
-    // ── Camera ──────────────────────────────────────────────────────────
+    // ── Camera ─────────────────────────────────────────────────────────
     this.cameras.main.startFollow(this.player, true, 0.1, 0.1);
     this.cameras.main.setZoom(1.35);
 
-    // ── Lyra companion sprite (floating orb) ───────────────────────────
+    // ── Lyra companion orb ─────────────────────────────────────────────
     this.lyraSprite = this.add.circle(0, 0, 8, 0xaaddff, 0.9).setDepth(70);
-    // add a glow
     this.add.circle(0, 0, 16, 0x6699ff, 0.18).setDepth(69);
 
     // ── Day/Night cycle start ──────────────────────────────────────────
@@ -187,34 +188,30 @@ export default class GameScene extends Phaser.Scene {
       this.shards = Object.keys(this.questFlags).filter(k => k.startsWith('shard_')).length;
     }
 
-    // ── Background music mood text ─────────────────────────────────────
+    // ── Title ─────────────────────────────────────────────────────────
     this.add.text(GAME_WIDTH / 2, 14, '— BERSERK ADVENTURE —', {
       fontFamily: 'monospace', fontSize: '13px', color: '#553322',
       stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(1000);
 
-    // ── Controls reminder ──────────────────────────────────────────────
-    this.add.text(12, GAME_HEIGHT - 100, 'WASD/↑↓←→:Move  Q:Sweep  F:Dodge  E:Bolt  R:Berserk  X/J:Attack  Space:Talk', {
+    // ── Controls reminder ─────────────────────────────────────────────
+    this.add.text(12, GAME_HEIGHT - 100,
+      'WASD/↑↓←→:Move  Q:Sweep  F:Dodge  E:Bolt  R:Berserk  X/J:Attack  Space:Talk', {
       fontFamily: 'monospace', fontSize: '11px', color: '#443322',
       stroke: '#000', strokeThickness: 2,
     }).setScrollFactor(0).setDepth(1000);
   }
 
-  // ── Build tilemap ───────────────────────────────────────────────────
+  // ── Build tilemap ────────────────────────────────────────────────────
   private _buildMap(): void {
-    // Draw a procedural floor texture overlay using a graphics object for ambience
     const ts = worldMap.tileSize;
 
-    // Check if tileset sprite is loaded
-    const tilesetKey = this.textures.exists(worldMap.tileset) ? worldMap.tileset : '__tiles_berserk';
-
     if (!this.textures.exists('__tiles_berserk')) {
-      // Build rich pixel texture for floor and walls
-      const g = this.make.graphics({ x: 0, y: 0, add: false });
+      // Build rich pixel texture for floor and walls using Graphics
+      const g = this.make.graphics({ x: 0, y: 0 });
       // Frame 0: muddy cobblestone floor
       g.fillStyle(0x2a2018, 1).fillRect(0, 0, ts, ts);
       g.fillStyle(0x1e160f, 1).fillRect(2, 2, ts - 4, ts - 4);
-      // cobble detail
       g.fillStyle(0x302418, 0.8).fillRect(4, 4, 10, 8);
       g.fillStyle(0x302418, 0.8).fillRect(16, 6, 12, 7);
       g.fillStyle(0x252010, 0.8).fillRect(6, 16, 8, 10);
@@ -243,7 +240,7 @@ export default class GameScene extends Phaser.Scene {
     this.physics.world.setBounds(0, 0, this.map.widthInPixels, this.map.heightInPixels);
     this.cameras.main.setBounds(0, 0, this.map.widthInPixels, this.map.heightInPixels);
 
-    // Dark vignette overlay per-tile decals — scattered mud/blood spots
+    // Mud/blood spot decals
     const decals = this.add.graphics().setDepth(3);
     decals.fillStyle(0x0a0808, 0.35);
     for (let i = 0; i < 120; i++) {
@@ -256,10 +253,9 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // ── Build player ────────────────────────────────────────────────────
+  // ── Build player ──────────────────────────────────────────────────────
   private _buildPlayer(): void {
     const ts = worldMap.tileSize;
-    // Start near center of map
     const startX = 8 * ts + ts / 2;
     const startY = 8 * ts + ts / 2;
 
@@ -274,7 +270,6 @@ export default class GameScene extends Phaser.Scene {
 
     this.playerHealth = new Health(120);
     this.playerHpBar  = new HealthBar(this, this.player, this.playerHealth, 44);
-    this.swordAttack  = new Attack(18, 420);
 
     this.playerHealth.onDeath = () => {
       clearSave();
@@ -282,31 +277,29 @@ export default class GameScene extends Phaser.Scene {
       this.time.delayedCall(800, () => this.gameOver(this.kills));
     };
 
-    this.playerHealth.onChange = (cur, max) => {
+    this.playerHealth.onChange = (_cur, _max) => {
       if (this.hud) this.hud.updateHealth(this.playerHealth);
-      // Flash red when hurt
       this.cameras.main.flash(80, 120, 0, 0);
-      const ratio = cur / max;
-      this.rage.add(8 + (1 - ratio) * 8); // taking damage fills rage
+      const ratio = _cur / _max;
+      this.rage.add(8 + (1 - ratio) * 8);
     };
 
-    // Draw brand sigil on player using a graphic overlay
+    // Brand sigil overlay
     const brand = this.add.graphics().setDepth(66);
     brand.lineStyle(1, 0xcc2200, 0.7);
     brand.strokeCircle(0, 0, 4);
-    brand.strokeLine(-4, 0, 4, 0);
-    brand.strokeLine(0, -4, 0, 4);
-    // Follow player every frame
+    // Draw cross lines manually without strokeLine
+    brand.beginPath();
+    brand.moveTo(-4, 0); brand.lineTo(4, 0);
+    brand.moveTo(0, -4); brand.lineTo(0, 4);
+    brand.strokePath();
     this.events.on(Phaser.Scenes.Events.UPDATE, () => {
       brand.setPosition(this.player.x, this.player.y - 4);
     });
   }
 
-  // ── Spawn NPCs ──────────────────────────────────────────────────────
+  // ── Spawn NPCs ────────────────────────────────────────────────────────
   private _spawnNpcs(): void {
-    const ts = worldMap.tileSize;
-
-    // Lyra companion — near starting position
     const lyraNpc = spawnNpc(this, this.map, {
       id: 'lyra',
       tileX: 10, tileY: 9,
@@ -316,7 +309,6 @@ export default class GameScene extends Phaser.Scene {
     lyraNpc.sprite.setDisplaySize(18, 18).setTint(0x88bbff);
     this.npcs.push(lyraNpc);
 
-    // Elder
     const elder = spawnNpc(this, this.map, {
       id: 'elder',
       tileX: 8, tileY: 11,
@@ -327,7 +319,6 @@ export default class GameScene extends Phaser.Scene {
     this._addNpcLabel(elder, 'Elder Craw', 0x886644);
     this.npcs.push(elder);
 
-    // Blacksmith
     const smith = spawnNpc(this, this.map, {
       id: 'smith',
       tileX: 32, tileY: 11,
@@ -337,12 +328,6 @@ export default class GameScene extends Phaser.Scene {
     smith.sprite.setDisplaySize(22, 24).setTint(0x775544);
     this._addNpcLabel(smith, 'Gorn the Smith', 0x774433);
     this.npcs.push(smith);
-
-    // Floating Lyra visual companion (separate from NPC talk point)
-    // Visual handled in update() - lyraSprite follows the player
-
-    // Add interact prompts decoration to NPCs
-    void ts; // used above
   }
 
   private _addNpcLabel(npc: Npc, name: string, color: number): void {
@@ -351,7 +336,6 @@ export default class GameScene extends Phaser.Scene {
       color: '#' + color.toString(16).padStart(6, '0'),
       stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5).setDepth(500);
-    // Small E prompt
     const prompt = this.add.text(npc.sprite.x, npc.sprite.y - 32, '[E]', {
       fontFamily: 'monospace', fontSize: '10px', color: '#aaaaaa',
     }).setOrigin(0.5).setDepth(500).setVisible(false);
@@ -359,7 +343,7 @@ export default class GameScene extends Phaser.Scene {
     npc.state['prompt'] = prompt;
   }
 
-  // ── Spawn apostles ─────────────────────────────────────────────────
+  // ── Spawn apostles ────────────────────────────────────────────────────
   private _spawnApostles(): void {
     const ts = worldMap.tileSize;
     APOSTLE_POSITIONS.forEach(([tx, ty], i) => {
@@ -382,13 +366,11 @@ export default class GameScene extends Phaser.Scene {
     if (this.dialogue.isOpen) {
       if (this.interactPressed()) this.dialogue.advance();
 
-      // Check heal flag from Lyra dialogue
       if (!this.lyraHealFlag && this.questFlags['lyra_healed']) {
         this.lyraHealFlag = true;
         this.playerHealth.heal(40);
         this.hud.showPrompt('Lyra heals you for 40 HP!', 2000);
       }
-      // Check win trigger
       if (this.questFlags['enter_eclipse'] && !this.gameWon) {
         this._triggerWin();
       }
@@ -396,7 +378,7 @@ export default class GameScene extends Phaser.Scene {
       return;
     }
 
-    // ── Day / Night cycle ──────────────────────────────────────────────
+    // ── Day / Night cycle ─────────────────────────────────────────────
     this.cycleTimer = (this.cycleTimer + delta) % CYCLE_MS;
     const wasNight = this.isNight;
     this.isNight = this.cycleTimer > DAY_MS;
@@ -405,7 +387,6 @@ export default class GameScene extends Phaser.Scene {
       this.cameras.main.flash(400, 0, 0, 20);
     } else if (wasNight && !this.isNight) {
       this.hud.showPrompt('Dawn breaks. Demons retreat...', 2500);
-      // Cull night enemies
       this.enemies = this.enemies.filter(e => {
         if (!e.isApostle && !e.health.dead && e.state !== 'dead') {
           e.health.damage(9999);
@@ -415,13 +396,11 @@ export default class GameScene extends Phaser.Scene {
       });
     }
 
-    // Day/night HUD ratio
     const cycleRatio = this.isNight
       ? (this.cycleTimer - DAY_MS) / NIGHT_MS
       : this.cycleTimer / DAY_MS;
     this.hud.updateDayNight(cycleRatio, this.isNight);
 
-    // Night wave spawner
     if (this.isNight) {
       this.nightWaveTimer -= delta;
       if (this.nightWaveTimer <= 0) {
@@ -430,10 +409,10 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    // ── Player movement ────────────────────────────────────────────────
+    // ── Player movement ───────────────────────────────────────────────
     this._updatePlayerMovement(now, delta);
 
-    // ── Abilities ──────────────────────────────────────────────────────
+    // ── Abilities ─────────────────────────────────────────────────────
     this._updateAbilities(now);
 
     // ── Bolts flight ──────────────────────────────────────────────────
@@ -448,15 +427,12 @@ export default class GameScene extends Phaser.Scene {
     this._updateEnemies(now, delta);
 
     // ── Clean dead enemies ────────────────────────────────────────────
-    this.enemies = this.enemies.filter(e => {
-      if (e.state === 'dead' || e.health.dead) return false;
-      return true;
-    });
+    this.enemies = this.enemies.filter(e => !(e.state === 'dead' || e.health.dead));
 
     // ── NPC interaction ───────────────────────────────────────────────
     this._updateNpcInteraction();
 
-    // ── Lyra companion orb ─────────────────────────────────────────────
+    // ── Lyra companion orb ────────────────────────────────────────────
     this._updateLyraOrb(now, delta);
 
     // ── Invincibility frames ──────────────────────────────────────────
@@ -470,9 +446,8 @@ export default class GameScene extends Phaser.Scene {
       }
     }
 
-    // ── Berserk mode drain ────────────────────────────────────────────
+    // ── Berserk mode health drain ─────────────────────────────────────
     if (this.rage.isBerserk) {
-      // drains health slowly
       if (now % 500 < delta) {
         this.playerHealth.damage(3);
       }
@@ -491,20 +466,22 @@ export default class GameScene extends Phaser.Scene {
     ]);
     this.hud.update(delta);
 
-    // ── NPC prompt visibility ────────────────────────────────────────
+    // ── NPC prompt visibility ─────────────────────────────────────────
     for (const npc of this.npcs) {
       const prompt = npc.state['prompt'] as Phaser.GameObjects.Text | undefined;
       if (prompt) {
-        const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, npc.sprite.x, npc.sprite.y);
+        const d = Phaser.Math.Distance.Between(
+          this.player.x, this.player.y, npc.sprite.x, npc.sprite.y);
         prompt.setVisible(d < 60);
       }
     }
 
-    // ── Win condition check ────────────────────────────────────────────
+    // ── Win condition ─────────────────────────────────────────────────
     if (this.shards >= 5 && !this.gameWon) {
       const lyra = this.npcs.find(n => n.id === 'lyra');
       if (lyra) {
-        const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, lyra.sprite.x, lyra.sprite.y);
+        const d = Phaser.Math.Distance.Between(
+          this.player.x, this.player.y, lyra.sprite.x, lyra.sprite.y);
         if (d < 60 && this.interactPressed()) {
           this.dialogue.open(lyraWinDialogue, this.questFlags);
         }
@@ -518,7 +495,7 @@ export default class GameScene extends Phaser.Scene {
   // ══════════════════════════════════════════════════════════════════════
   //  PLAYER MOVEMENT
   // ══════════════════════════════════════════════════════════════════════
-  private _updatePlayerMovement(now: number, delta: number): void {
+  private _updatePlayerMovement(_now: number, delta: number): void {
     if (this.dodgeActive) {
       this.dodgeTimer -= delta;
       const spd = this.rage.isBerserk ? 640 : 480;
@@ -554,14 +531,7 @@ export default class GameScene extends Phaser.Scene {
       this.facingY = vy / len;
     }
 
-    // Berserk tint
-    if (this.rage.isBerserk) {
-      this.player.setTint(0xff6633);
-    } else {
-      this.player.setTint(0xc8a878);
-    }
-
-    void now;
+    this.player.setTint(this.rage.isBerserk ? 0xff6633 : 0xc8a878);
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -575,7 +545,10 @@ export default class GameScene extends Phaser.Scene {
       this.cooldownSweep.use(now);
       const dmg = berserk ? 55 : 32;
       const ptr = this._getAimPoint();
-      const sweep = sweepAttack(this, this.player.x, this.player.y, ptr.x, ptr.y, dmg, berserk ? 0xff4400 : 0xcc8822);
+      const sweep = sweepAttack(
+        this, this.player.x, this.player.y, ptr.x, ptr.y, dmg,
+        berserk ? 0xff4400 : 0xcc8822,
+      );
       let hit = false;
       for (const enemy of this.enemies) {
         if (!enemy.health.dead && sweepHits(sweep, enemy.sprite.x, enemy.sprite.y)) {
@@ -590,7 +563,7 @@ export default class GameScene extends Phaser.Scene {
       if (hit) this.cameras.main.shake(60, 0.006);
     }
 
-    // F — Dodge Roll (W is used for up-movement)
+    // F — Dodge Roll
     if (Phaser.Input.Keyboard.JustDown(this.keyF) && this.cooldownDodge.ready(now) && !this.dodgeActive) {
       this.cooldownDodge.use(now);
       const ptr = this._getAimPoint();
@@ -612,7 +585,10 @@ export default class GameScene extends Phaser.Scene {
       const ptr = this._getAimPoint();
       const dmg = berserk ? 70 : 42;
       const spd = berserk ? 700 : 520;
-      const bolt = fireBolt(this, this.player.x, this.player.y, ptr.x, ptr.y, spd, dmg, berserk ? 0xff3300 : 0x88aaff);
+      const bolt = fireBolt(
+        this, this.player.x, this.player.y, ptr.x, ptr.y, spd, dmg,
+        berserk ? 0xff3300 : 0x88aaff,
+      );
       this.bolts.push(bolt);
       this.cameras.main.shake(30, 0.003);
       this.rage.add(5);
@@ -626,7 +602,6 @@ export default class GameScene extends Phaser.Scene {
         this.cameras.main.flash(200, 80, 0, 0);
         this.hud.showPrompt('⚡ BERSERK MODE ACTIVATED ⚡', 3000);
         this._spawnHitVfx(this.player.x, this.player.y, 0xff4400);
-        // Heal slightly on berserk
         this.playerHealth.heal(20);
       } else if (this.rage.current < this.rage.max) {
         this.hud.showPrompt('Rage not full!', 1000);
@@ -634,15 +609,13 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // ── Bolt flight & collision ──────────────────────────────────────────
+  // ── Bolt flight & collision ───────────────────────────────────────────
   private _updateBolts(now: number): void {
     const toRemove: number[] = [];
     for (let i = 0; i < this.bolts.length; i++) {
       const bolt = this.bolts[i];
       if (!bolt.sprite.active) { toRemove.push(i); continue; }
-      // Lifetime
       if (now - bolt.born > 2500) { bolt.sprite.destroy(); toRemove.push(i); continue; }
-      // Wall collision
       const tile = this.map.getTileAtWorldXY(bolt.sprite.x, bolt.sprite.y);
       if (tile && worldMap.collision.includes(tile.index)) {
         this._spawnHitVfx(bolt.sprite.x, bolt.sprite.y, 0x8888ff);
@@ -650,11 +623,11 @@ export default class GameScene extends Phaser.Scene {
         toRemove.push(i);
         continue;
       }
-      // Enemy collision
       let hit = false;
       for (const enemy of this.enemies) {
         if (enemy.health.dead) continue;
-        const d = Phaser.Math.Distance.Between(bolt.sprite.x, bolt.sprite.y, enemy.sprite.x, enemy.sprite.y);
+        const d = Phaser.Math.Distance.Between(
+          bolt.sprite.x, bolt.sprite.y, enemy.sprite.x, enemy.sprite.y);
         if (d < enemy.sprite.displayWidth * 0.7) {
           enemy.health.damage(bolt.damage);
           knockback(enemy, bolt.sprite.x, bolt.sprite.y, this.rage.isBerserk ? 350 : 200);
@@ -672,14 +645,15 @@ export default class GameScene extends Phaser.Scene {
     for (let i = toRemove.length - 1; i >= 0; i--) this.bolts.splice(toRemove[i], 1);
   }
 
-  // ── Melee attack ───────────────────────────────────────────────────
-  private _doMeleeAttack(now: number): void {
+  // ── Melee attack ──────────────────────────────────────────────────────
+  private _doMeleeAttack(_now: number): void {
     const range = this.rage.isBerserk ? 72 : 54;
     const dmg   = this.rage.isBerserk ? 45 : 22;
     let hit = false;
     for (const enemy of this.enemies) {
       if (enemy.health.dead) continue;
-      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, enemy.sprite.x, enemy.sprite.y);
+      const d = Phaser.Math.Distance.Between(
+        this.player.x, this.player.y, enemy.sprite.x, enemy.sprite.y);
       if (d < range) {
         const atk = new Attack(dmg, 420);
         const landed = atk.tryHit(this, enemy.health);
@@ -694,29 +668,30 @@ export default class GameScene extends Phaser.Scene {
     }
     if (hit) {
       this.cameras.main.shake(40, 0.005);
-      // Sword flash VFX
       const flashX = this.player.x + this.facingX * 30;
       const flashY = this.player.y + this.facingY * 30;
-      const slash = this.add.rectangle(flashX, flashY, this.rage.isBerserk ? 60 : 44, 8,
-        this.rage.isBerserk ? 0xff5500 : 0xddbb44, 0.8).setDepth(75).setRotation(Math.atan2(this.facingY, this.facingX));
+      const slash = this.add.rectangle(
+        flashX, flashY,
+        this.rage.isBerserk ? 60 : 44, 8,
+        this.rage.isBerserk ? 0xff5500 : 0xddbb44, 0.8,
+      ).setDepth(75).setRotation(Math.atan2(this.facingY, this.facingX));
       this.time.delayedCall(120, () => slash.destroy());
     }
-    void now;
   }
 
-  // ── Enemy AI update ─────────────────────────────────────────────────
+  // ── Enemy AI update ────────────────────────────────────────────────────
   private _updateEnemies(now: number, delta: number): void {
     for (const enemy of this.enemies) {
       if (enemy.health.dead || enemy.state === 'dead') continue;
-      // Don't let enemy push player when invincible
-      if (this.isInvincible) continue;
 
       updateEnemy(enemy, this.player, this.playerHealth, now, delta, this.isNight, this);
 
-      // If enemy attacks player: trigger i-frames
-      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, enemy.sprite.x, enemy.sprite.y);
+      if (this.isInvincible) continue;
+
+      const d = Phaser.Math.Distance.Between(
+        this.player.x, this.player.y, enemy.sprite.x, enemy.sprite.y);
       const aRange = enemy.isApostle ? 70 : 45;
-      if (d < aRange && !this.isInvincible) {
+      if (d < aRange) {
         const hit = enemy.attack.tryHit(this, this.playerHealth);
         if (hit) {
           this.isInvincible = true;
@@ -728,16 +703,15 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // ── NPC interaction ─────────────────────────────────────────────────
+  // ── NPC interaction ────────────────────────────────────────────────────
   private _updateNpcInteraction(): void {
     const near = nearestNpcInRange(this.player, this.npcs, 55);
     if (near && this.interactPressed()) {
       if (near.id === 'lyra' && this.shards >= 5) {
         this.dialogue.open(lyraWinDialogue, this.questFlags);
       } else if (near.id === 'lyra') {
-        // Check if already done main dialogue — offer heal
         if (this.questFlags['lyra_met']) {
-          this.questFlags['lyra_healed'] = false; // reset so heal triggers again
+          this.questFlags['lyra_healed'] = false;
           this.dialogue.open(lyraHealDialogue, this.questFlags, () => {
             this.playerHealth.heal(35);
             this.hud.showPrompt('Lyra mends your wounds. +35 HP', 2000);
@@ -752,24 +726,20 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // ── Lyra companion orb ──────────────────────────────────────────────
+  // ── Lyra companion orb ─────────────────────────────────────────────────
   private _updateLyraOrb(now: number, delta: number): void {
     this.lyraAngle += delta * 0.002;
     const radius = 28;
     const orbX = this.player.x + Math.cos(this.lyraAngle) * radius;
     const orbY = this.player.y + Math.sin(this.lyraAngle) * radius - 8;
     this.lyraSprite.setPosition(orbX, orbY);
-    // Pulse
     this.lyraSprite.setAlpha(0.75 + 0.25 * Math.sin(now / 300));
-    // At night, Lyra is brighter
-    const scale = this.isNight ? 1.4 : 1.0;
-    this.lyraSprite.setRadius(8 * scale);
-    void delta;
+    this.lyraSprite.setRadius(this.isNight ? 11 : 8);
   }
 
-  // ── Night wave spawner ──────────────────────────────────────────────
+  // ── Night wave spawner ─────────────────────────────────────────────────
   private _spawnNightWave(): void {
-    const count = this.isNight ? Phaser.Math.Between(3, 6) : 0;
+    const count = Phaser.Math.Between(3, 6);
     const ts = worldMap.tileSize;
     for (let i = 0; i < count; i++) {
       const spawnPt = WAVE_SPAWNS[Phaser.Math.Between(0, WAVE_SPAWNS.length - 1)];
@@ -783,12 +753,11 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // ── Enemy killed callback ────────────────────────────────────────────
+  // ── Enemy killed callback ──────────────────────────────────────────────
   private _onEnemyKilled(enemy: Enemy): void {
     this.kills++;
     this.score += enemy.isApostle ? 500 : enemy.type === 'demon' ? 50 : 20;
     this.rage.add(enemy.isApostle ? 35 : 15);
-
     this.cameras.main.shake(enemy.isApostle ? 250 : 60, enemy.isApostle ? 0.016 : 0.004);
 
     if (enemy.isApostle && enemy.shardIndex >= 0) {
@@ -800,17 +769,16 @@ export default class GameScene extends Phaser.Scene {
         this.hud.showPrompt(`★ CORRUPTED SHARD ${this.shards}/5 OBTAINED! ★`, 3500);
         this.cameras.main.flash(300, 80, 0, 80);
         if (this.shards >= 5) {
-          this.hud.showPrompt('All 5 Shards collected! Return to Lyra to open the Eclipse Gate!', 5000);
+          this.hud.showPrompt(
+            'All 5 Shards collected! Return to Lyra to open the Eclipse Gate!', 5000);
         }
       }
     }
 
-    // Combo display
     if (this.kills % 5 === 0) {
       this.hud.showCombo(`${this.kills} KILLS — "Fight on, Marked One!"`);
     }
 
-    // Auto-save after kills
     if (this.kills % 3 === 0) {
       saveGame({
         playerPos: { x: this.player.x, y: this.player.y },
@@ -821,7 +789,7 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // ── Shard pickup VFX ────────────────────────────────────────────────
+  // ── Shard pickup VFX ──────────────────────────────────────────────────
   private _spawnShardPickup(x: number, y: number, index: number): void {
     const shard = this.add.circle(x, y, 10, 0xaa44ff, 0.9).setDepth(85);
     const lbl = this.add.text(x, y - 16, `SHARD ${index + 1}`, {
@@ -832,14 +800,10 @@ export default class GameScene extends Phaser.Scene {
       targets: [shard, lbl], y: '-=60', alpha: 0, duration: 1400,
       onComplete: () => { shard.destroy(); lbl.destroy(); },
     });
-    // Add to inventory
-    this.inventory.add({
-      id: `shard_${index}`,
-      name: `Corrupted Shard #${index + 1}`,
-    });
+    this.inventory.add({ id: `shard_${index}`, name: `Corrupted Shard #${index + 1}` });
   }
 
-  // ── Hit VFX ─────────────────────────────────────────────────────────
+  // ── Hit VFX ───────────────────────────────────────────────────────────
   private _spawnHitVfx(x: number, y: number, color: number): void {
     for (let i = 0; i < 5; i++) {
       const p = this.add.circle(
@@ -854,24 +818,22 @@ export default class GameScene extends Phaser.Scene {
     }
   }
 
-  // ── Get aim point (mouse or facing direction) ────────────────────────
+  // ── Get aim point ─────────────────────────────────────────────────────
   private _getAimPoint(): Phaser.Math.Vector2 {
     const ptr = this.pointerTarget();
     if (ptr) return ptr;
-    // Fall back to facing direction
     return new Phaser.Math.Vector2(
       this.player.x + this.facingX * 200,
       this.player.y + this.facingY * 200,
     );
   }
 
-  // ── Win trigger ───────────────────────────────────────────────────────
+  // ── Win trigger ────────────────────────────────────────────────────────
   private _triggerWin(): void {
     if (this.gameWon) return;
     this.gameWon = true;
     this.player.setVelocity(0, 0);
 
-    // Dramatic sequence
     this.cameras.main.flash(600, 80, 0, 80);
     this.cameras.main.shake(800, 0.02);
 
@@ -885,14 +847,14 @@ export default class GameScene extends Phaser.Scene {
         stroke: '#000', strokeThickness: 4,
       }).setOrigin(0.5).setScrollFactor(0).setDepth(2001);
 
-      this.add.text(cx, cy - 60, '"You step through the rift, blade heavy\nwith the blood of five Apostles."', {
-        fontFamily: 'monospace', fontSize: '16px', color: '#aaaacc',
-        align: 'center',
+      this.add.text(cx, cy - 60,
+        '"You step through the rift, blade heavy\nwith the blood of five Apostles."', {
+        fontFamily: 'monospace', fontSize: '16px', color: '#aaaacc', align: 'center',
       }).setOrigin(0.5).setScrollFactor(0).setDepth(2001);
 
-      this.add.text(cx, cy + 10, '"Lyra\'s light gutters — the world\nbeyond is absolute darkness."\n\n"But you have survived worse."', {
-        fontFamily: 'monospace', fontSize: '16px', color: '#9988aa',
-        align: 'center',
+      this.add.text(cx, cy + 10,
+        '"Lyra\'s light gutters — the world\nbeyond is absolute darkness."\n\n"But you have survived worse."', {
+        fontFamily: 'monospace', fontSize: '16px', color: '#9988aa', align: 'center',
       }).setOrigin(0.5).setScrollFactor(0).setDepth(2001);
 
       this.add.text(cx, cy + 110, `APOSTLES SLAIN: ${this.kills}   SHARDS: 5/5`, {
@@ -912,9 +874,9 @@ export default class GameScene extends Phaser.Scene {
     });
   }
 
-  // ════════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════
   //  Named Input Helpers (engine contract)
-  // ════════════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════
   protected movingLeft():  boolean { return this.cursors.left.isDown  || this.keyA.isDown; }
   protected movingRight(): boolean { return this.cursors.right.isDown || this.keyD.isDown; }
   protected movingUp():    boolean { return this.cursors.up.isDown    || this.keyW.isDown; }
@@ -927,8 +889,7 @@ export default class GameScene extends Phaser.Scene {
   }
 
   protected interactPressed(): boolean {
-    return Phaser.Input.Keyboard.JustDown(this.keyE)
-      || Phaser.Input.Keyboard.JustDown(this.keySpace)
+    return Phaser.Input.Keyboard.JustDown(this.keySpace)
       || Phaser.Input.Keyboard.JustDown(this.keyEnter)
       || this.tapped();
   }

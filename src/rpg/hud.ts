@@ -18,17 +18,17 @@ export class HUD {
   private rageText: Phaser.GameObjects.Text;
   private berserkLabel: Phaser.GameObjects.Text;
 
-  // Ability slots Q / W / E / R
+  // Ability slots Q / F / E / R
   private abilitySlots: Phaser.GameObjects.Container[] = [];
   private cooldownOverlays: Phaser.GameObjects.Rectangle[] = [];
-  private abilityKeys = ['Q', 'W', 'E', 'R'];
+  private abilityKeys = ['Q', 'F', 'E', 'R'];
 
   // Shard counter
   private shardText: Phaser.GameObjects.Text;
 
   // Day / Night
   private dayNightLabel: Phaser.GameObjects.Text;
-  private dayNightBar: Phaser.GameObjects.Rectangle;
+  private dayNightBg: Phaser.GameObjects.Rectangle;
   private dayNightFill: Phaser.GameObjects.Rectangle;
 
   // Night overlay (covers whole screen)
@@ -87,7 +87,7 @@ export class HUD {
       const lbl = scene.add.text(x, y + this.SLOT_SIZE / 2 - 14, this.abilityKeys[i], {
         fontFamily: 'monospace', fontSize: '11px', color: '#888888',
       }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(D + 903);
-      const names = ['SWEEP', 'ROLL', 'BOLT', 'BERSERK'];
+      const names = ['SWEEP', 'DODGE', 'BOLT', 'BERSERK'];
       const icon = scene.add.text(x, y - 6, names[i], {
         fontFamily: 'monospace', fontSize: '10px', color: '#cc5500',
       }).setOrigin(0.5).setScrollFactor(0).setDepth(D + 903);
@@ -137,10 +137,12 @@ export class HUD {
       fontFamily: 'monospace', fontSize: '22px', color: '#ff6600',
       stroke: '#000', strokeThickness: 4,
     }).setOrigin(0.5).setScrollFactor(0).setDepth(D + 905).setVisible(false);
-  }
 
-  // Workaround: store bar bg reference
-  private dayNightBg: Phaser.GameObjects.Rectangle;
+    // suppress unused warning
+    void this.rageBg;
+    void this.hpBg;
+    void this.dayNightBg;
+  }
 
   updateHealth(health: Health): void {
     const ratio = health.max > 0 ? health.current / health.max : 0;
@@ -175,7 +177,6 @@ export class HUD {
   }
 
   updateDayNight(dayRatio: number, isNight: boolean): void {
-    const dnW = 160;
     this.dayNightFill.scaleX = isNight ? 1 - dayRatio : dayRatio;
     this.dayNightFill.setFillStyle(isNight ? 0x3322aa : 0xffcc44);
     this.dayNightLabel.setText(isNight ? 'NIGHT' : 'DAY').setColor(isNight ? '#6688cc' : '#ccaa44');
